@@ -4,6 +4,8 @@ EasyDrop is a local-first peer-to-peer file and text sharing app. It lets two de
 
 The server is used only for session creation and WebRTC signaling. Files are not uploaded to the server.
 
+![EasyDrop home screen](docs/assets/easydrop-home.png)
+
 ## Features
 
 - QR code pairing
