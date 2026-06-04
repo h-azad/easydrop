@@ -1,0 +1,25 @@
+{
+  "name": "easydrop",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:web": "npm run dev -w @easydrop/web",
+    "dev:server": "npm run dev -w @easydrop/signaling-server",
+    "build": "npm run build --workspaces --if-present",
+    "build:web": "npm run build -w @easydrop/web",
+    "build:server": "npm run build -w @easydrop/signaling-server",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3"
+  }
+}
