@@ -2,10 +2,10 @@
 
 EasyDrop has two deployable parts:
 
-- `apps/web`: Next.js UI. Deploy this to Vercel.
+- `apps/web`: Next.js UI. Deploy this to Vercel or Netlify.
 - `apps/signaling-server`: Fastify + Socket.IO signaling server. Deploy this as a long-running Node process, for example with Docker on a VPS, Railway, Render, Fly.io, or similar.
 
-Vercel should use the `main` branch for production deployments.
+Vercel and Netlify should use the `main` branch for production deployments.
 
 ## Docker
 
@@ -55,6 +55,40 @@ NEXT_PUBLIC_SIGNALING_URL=https://your-signaling-server.example.com
 ```
 
 Set this for Production, Preview, and Development if you use Vercel previews.
+
+## Netlify Web Deployment
+
+Deploy only `apps/web` to Netlify. The signaling server still needs a separate long-running WebSocket host.
+
+Recommended Netlify project settings:
+
+- Production branch: `main`
+- Base directory: leave unset so Netlify uses the repository root
+- Package directory: leave unset so npm workspaces install from the repository root
+- Build command: read from `netlify.toml`
+- Publish directory: read from `netlify.toml`
+
+`netlify.toml` uses:
+
+```toml
+[build]
+  command = "npm run build:web"
+  publish = "apps/web/.next"
+```
+
+Environment variables:
+
+```text
+NEXT_PUBLIC_SIGNALING_URL=https://your-signaling-server.example.com
+```
+
+Optional Netlify environment variable:
+
+```text
+NETLIFY_NEXT_SKEW_PROTECTION=true
+```
+
+Use this if you want Netlify's Next.js skew protection for production deployments.
 
 ## Signaling Server Deployment
 
