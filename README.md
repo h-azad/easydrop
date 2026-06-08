@@ -43,8 +43,6 @@ No file payloads are stored by the server.
 - Redis
 - WebRTC `RTCDataChannel`
 - Docker
-- Vercel for the web app
-- Netlify for the web app
 
 ## Monorepo Structure
 
@@ -164,48 +162,14 @@ npm run docker:up
 
 ## Deployment
 
-See [docs/deployment.md](docs/deployment.md) for full Docker, Vercel, and Netlify deployment instructions.
+See [docs/deployment.md](docs/deployment.md) for full Docker and deployment instructions.
 
 Production deployment is split into two parts:
 
-- Deploy `apps/web` to Vercel from the `main` branch.
+- Deploy `apps/web` to a host that supports Next.js.
 - Deploy `apps/signaling-server` to a long-running Node/WebSocket host.
 
-Vercel is not suitable for the Socket.IO signaling server because it needs persistent WebSocket connections.
-
-## Vercel Notes
-
-Recommended Vercel settings:
-
-- Production branch: `main`
-- Root directory: `apps/web`
-- Framework preset: Next.js
-- Config: `apps/web/vercel.json`
-
-Required Vercel environment variable:
-
-```text
-NEXT_PUBLIC_SIGNALING_URL=https://your-signaling-server.example.com
-```
-
-## Netlify Notes
-
-Netlify can host the `apps/web` Next.js frontend, but not the persistent Socket.IO signaling server.
-
-Recommended Netlify settings:
-
-- Production branch: `main`
-- Base directory: leave unset
-- Package directory: leave unset
-- Config: `netlify.toml`
-- Build command: `npm run build:web`
-- Publish directory: `apps/web/.next`
-
-Required Netlify environment variable:
-
-```text
-NEXT_PUBLIC_SIGNALING_URL=https://your-signaling-server.example.com
-```
+Serverless functions are not suitable for the Socket.IO signaling server because it needs persistent WebSocket connections.
 
 ## Browser Support
 
