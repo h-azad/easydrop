@@ -1,0 +1,183 @@
+name: Deploy to Amazon ECS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-ecs
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: web
+            dockerfile: apps/web/Dockerfile
+            repository_variable: ECR_WEB_REPOSITORY
+            service_variable: ECS_WEB_SERVICE
+            container_variable: ECS_WEB_CONTAINER_NAME
+          - name: signaling
+            dockerfile: apps/signaling-server/Dockerfile
+            repository_variable: ECR_SIGNALING_REPOSITORY
+            service_variable: ECS_SIGNALING_SERVICE
+            container_variable: ECS_SIGNALING_CONTAINER_NAME
+
+    steps:
+      - name: Check deployment configuration
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECR_REPOSITORY: ${{ vars[matrix.repository_variable] }}
+          ECS_SERVICE: ${{ vars[matrix.service_variable] }}
+          ECS_CONTAINER_NAME: ${{ vars[matrix.container_variable] }}
+          NEXT_PUBLIC_SIGNALING_URL: ${{ vars.NEXT_PUBLIC_SIGNALING_URL }}
+          DEPLOYMENT_NAME: ${{ matrix.name }}
+        run: |
+          required=(
+            AWS_REGION
+            AWS_ROLE_ARN
+            ECS_CLUSTER
+            ECR_REPOSITORY
+            ECS_SERVICE
+            ECS_CONTAINER_NAME
+          )
+
+          if [[ "$DEPLOYMENT_NAME" == "web" ]]; then
+            required+=(NEXT_PUBLIC_SIGNALING_URL)
+          fi
+
+          for variable in "${required[@]}"; do
+            if [[ -z "${!variable}" ]]; then
+              echo "::error::$variable is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sign in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image URI
+        id: image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars[matrix.repository_variable] }}
+        run: echo "uri=$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          DEPLOYMENT_NAME: ${{ matrix.name }}
+          NEXT_PUBLIC_SIGNALING_URL: ${{ vars.NEXT_PUBLIC_SIGNALING_URL }}
+        run: |
+          build_args=()
+          if [[ "$DEPLOYMENT_NAME" == "web" ]]; then
+            build_args+=(--build-arg "NEXT_PUBLIC_SIGNALING_URL=$NEXT_PUBLIC_SIGNALING_URL")
+          fi
+
+          docker build \
+            --file "$DOCKERFILE" \
+            --tag "$IMAGE_URI" \
+            "${build_args[@]}" \
+            .
+          docker push "$IMAGE_URI"
+
+      - name: Create task definition revision
+        id: task-definition
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars[matrix.service_variable] }}
+          ECS_CONTAINER_NAME: ${{ vars[matrix.container_variable] }}
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          current_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+
+          if [[ -z "$current_task_definition" || "$current_task_definition" == "None" ]]; then
+            echo "::error::Could not find the active task definition for $ECS_SERVICE"
+            exit 1
+          fi
+
+          aws ecs describe-task-definition \
+            --task-definition "$current_task_definition" \
+            --query taskDefinition \
+            --output json > current-task-definition.json
+
+          if ! jq --arg name "$ECS_CONTAINER_NAME" \
+            '.containerDefinitions | any(.name == $name)' \
+            current-task-definition.json | grep -q true; then
+            echo "::error::Container $ECS_CONTAINER_NAME was not found in the task definition"
+            exit 1
+          fi
+
+          jq \
+            --arg name "$ECS_CONTAINER_NAME" \
+            --arg image "$IMAGE_URI" \
+            '
+              .containerDefinitions |= map(
+                if .name == $name then .image = $image else . end
+              )
+              | del(
+                  .taskDefinitionArn,
+                  .revision,
+                  .status,
+                  .requiresAttributes,
+                  .compatibilities,
+                  .registeredAt,
+                  .registeredBy,
+                  .deregisteredAt
+                )
+            ' current-task-definition.json > new-task-definition.json
+
+          task_definition_arn="$(
+            aws ecs register-task-definition \
+              --cli-input-json file://new-task-definition.json \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          )"
+
+          echo "arn=$task_definition_arn" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy task definition
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars[matrix.service_variable] }}
+          TASK_DEFINITION_ARN: ${{ steps.task-definition.outputs.arn }}
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --force-new-deployment
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
